@@ -8,15 +8,20 @@
 #define MAX_LOADSTRING 100
 
 // 전역 변수:
-HINSTANCE hInst;                                // 현재 인스턴스입니다.
+HINSTANCE hInst, g_inst;                                // 현재 인스턴스입니다.
 WCHAR szTitle[MAX_LOADSTRING];                  // 제목 표시줄 텍스트입니다.
 WCHAR szWindowClass[MAX_LOADSTRING];            // 기본 창 클래스 이름입니다.
+WCHAR ChildWindowClass[MAX_LOADSTRING];
+HWND captured_Wnd;
 
 // 이 코드 모듈에 포함된 함수의 선언을 전달합니다:
 ATOM                MyRegisterClass(HINSTANCE hInstance);
 BOOL                InitInstance(HINSTANCE, int);
 LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
+LRESULT CALLBACK    ChildWndProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
+
+static BOOL CALLBACK MonitorEnumProc(HMONITOR hMonitor, HDC hdc, LPRECT lpRect, LPARAM lParam);
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_opt_ HINSTANCE hPrevInstance,
@@ -84,6 +89,27 @@ ATOM MyRegisterClass(HINSTANCE hInstance)
     return RegisterClassExW(&wcex);
 }
 
+ATOM ChildRegisterClass(HINSTANCE hInstance)
+{
+    WNDCLASSEXW childwcex;
+
+    childwcex.cbSize = sizeof(WNDCLASSEX);
+
+    childwcex.style = CS_HREDRAW | CS_VREDRAW;
+    childwcex.lpfnWndProc = ChildWndProc;
+    childwcex.cbClsExtra = 0;
+    childwcex.cbWndExtra = 0;
+    childwcex.hInstance = hInstance;
+    childwcex.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_MY201907010VCPERSONALPROJECT));
+    childwcex.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    childwcex.hbrBackground = (HBRUSH)(GetStockObject(HOLLOW_BRUSH));
+    childwcex.lpszMenuName = NULL;
+    childwcex.lpszClassName = L"Capture";
+    childwcex.hIconSm = LoadIcon(childwcex.hInstance, MAKEINTRESOURCE(IDI_SMALL));
+
+    return RegisterClassExW(&childwcex);
+}
+
 //
 //   함수: InitInstance(HINSTANCE, int)
 //
@@ -125,6 +151,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 
 capture_screen cs;
 HBITMAP btmp;
+HWND g_hWnd;
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     switch (message)
@@ -149,27 +176,39 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     case WM_LBUTTONDOWN:
     {
+        EnumDisplayMonitors(NULL, NULL, MonitorEnumProc, NULL);
+        int width = GetSystemMetrics(SM_CXSCREEN);
+        int height = GetSystemMetrics(SM_CYSCREEN);
+
+        ChildRegisterClass(g_inst);
+        captured_Wnd = CreateWindowEx(0, L"Capture", L"Capture", WS_POPUP | WS_EX_TOPMOST, 0, 0, width, height, NULL, NULL, g_inst, NULL);
+        ShowWindow(captured_Wnd, SW_SHOW);
+
         btmp = cs.capture_s();
-        InvalidateRect(hWnd, NULL, true);
-        break;
+        
+        HDC hMemDC;
+        BITMAP bmp;
+        HDC hdc = GetDC(captured_Wnd);
+        hMemDC = CreateCompatibleDC(hdc);
+        SelectObject(hMemDC, btmp);
+        GetObject(btmp, sizeof(BITMAP), &bmp);
+        BitBlt(hdc, 0, 0, bmp.bmWidth, bmp.bmHeight, hMemDC, 0, 0, SRCCOPY);
+        DeleteDC(hMemDC);
+        ReleaseDC(captured_Wnd, hdc);
+
+        UpdateWindow(captured_Wnd);
     }
+    break;
+
+    
+    break;
     case WM_PAINT:
         { 
-            HDC hScrDC, hMemDC;
             PAINTSTRUCT ps;
-            BITMAP bmp;
 
             HDC hdc = BeginPaint(hWnd, &ps);
             // TODO: 여기에 hdc를 사용하는 그리기 코드를 추가합니다...
-            if (btmp != NULL)
-            {
-                hMemDC = CreateCompatibleDC(hdc);
-                SelectObject(hMemDC, btmp);
-                GetObject(btmp, sizeof(BITMAP), &bmp);
-                BitBlt(hdc, 0, 0, bmp.bmWidth, bmp.bmHeight, hMemDC, 0, 0, SRCCOPY);
 
-                DeleteDC(hMemDC);
-            }
             EndPaint(hWnd, &ps);
         }
         break;
@@ -181,7 +220,39 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     }
     return 0;
 }
+LRESULT CALLBACK ChildWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message)
+    {
+    case WM_KEYDOWN:
+    {
+        switch (wParam)
+        {
+        case VK_ESCAPE:
+        {
+            PostQuitMessage(0);
+        }
+        break;
+        }
+    }
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps;
 
+        HDC hdc = BeginPaint(hWnd, &ps);
+        // TODO: 여기에 hdc를 사용하는 그리기 코드를 추가합니다...
+
+        EndPaint(hWnd, &ps);
+    }
+    break;
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        break;
+    default:
+        return DefWindowProc(hWnd, message, wParam, lParam);
+    }
+    return 0;
+}
 // 정보 대화 상자의 메시지 처리기입니다.
 INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
@@ -201,3 +272,13 @@ INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
     }
     return (INT_PTR)FALSE;
 }
+
+BOOL CALLBACK MonitorEnumProc(HMONITOR hMonitor, HDC hdc, LPRECT lpRect, LPARAM lParam)
+{
+    MONITORINFO mi;
+    mi.cbSize = sizeof(mi);
+    GetMonitorInfo(hMonitor, &mi);
+
+    return TRUE;
+
+};
